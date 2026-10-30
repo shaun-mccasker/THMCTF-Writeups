@@ -1,0 +1,127 @@
+THM CTF  
+RECRUIT 
+
+Write-Up 
+
+By 
+Shaun McCasker 
+
+
+CTF TASK 
+
+Recruit has just launched its new recruitment portal, allowing HR staff to manage candidate applications and administrators to oversee hiring decisions. While the platform appears functional, management suspects that security may have been overlooked during development. Your task is to assess the application like a real attacker, mapping its structure, abusing exposed functionality, and exploiting vulnerabilities. 
+
+Can you gain an initial foothold, escalate your access, and ultimately log in as the administrator? 
+
+
+Target 
+
+IP 10.48.161.170 
+
+User Credentials - username: hr password: hrpassword123 
+
+USER FLAG: THM{LOGGED_IN_USER} 
+
+Admin Credentials – username: admin password: admin@001admin 
+
+ADMIN FLAG: THM{LOGGED_IN_ADM1N1} 
+
+
+Summary 
+
+Directory enumeration found webserver misconfiguration exposing /sitemap.xml and other sensitive directories. Improper access controls allowed access to /mail/mail.log containing credentials used for 
+deployment. This included HR’s username (hr) and a file called config.txt containing HR’s password. Exposed API documentation at /api.php identified method for fetching CV’s “/file.php?cv=<URL>” 
+which is vulnerable to SSRF. SSRF via “/file.php?cv=file://config.php” gave access to config.php revealing HR’s password (hrpassword123).  
+
+Login using HR username:hr password:hrpassword123 gave access to the web portal revealing USER FLAG THM{LOGGED_IN_USER}.  
+
+User form to search for recruit applications found vulnerable to SQL Injection. Testing revealed SQL query must be similar to,  
+
+SELECT * FROM TABLE WHERE username LIKE ‘%input%’; 
+
+Using SQL injection UNION attack database name (recruit_db), table names (candidates, users) were identified. Users table contained columns ‘username, password’. 
+
+Final SQL query revealed admin username:admin and password:admin@001admin 
+
+Login to admin account revealed ADMIN FLAG: THM{LOGGED_IN_ADM1N1} 
+
+ 
+Attack workflow 
+
+This section outlines the thoughts and processes used to complete this CTF. 
+
+Recon 
+
+Goal was to identify services, directories and fingerprint the stack used for web development.  
+
+NMAP 
+
+Nmap resulted in 3 ports 22, 53 and 80. Server was also identified as Apache 2.4.41 which was confirmed when performing NIKTO scan. 
+
+ 
+
+Gobuster 
+
+Gobuster using common.txt most notably revealed sitemap.xml which further revealed api.php, file.php and mail.  
+
+ 
+
+Vulnerabilities and Exploitation 
+
+Misconfigured/Exposed files 
+
+Knowing the server was Apache and database was MYSQL I noted the LAMP stack was used. First I performed searchsploit on Apache 2.4.41 revealing nothing. 
+Next I did a simple SQL injection test on the login page using ‘ and OR 1=1 with no results. Accessing the website I went to the /phpmyadmin portal and 
+tried some default credentials with no results. Next I tried /mail as it seemed sensitive. No access controls were placed revealing an internal mail.log. 
+This document contained the following sensitive information. 
+
+This identified HR’s username and the next targets, the file config.php and the database containing admin credentials. Trying /config.php returned 200 but no information was served on the webpage. 
+
+SSRF 
+
+I moved on to examining /api revaled api documentation most notably how to access CV’s using the API via /file.php?cv=<URL>. I instantly recognised an SSRF as they passed the 
+whole URL into the request. First I tried /file.php?cv=config.php. 
+
+I continued to try some random values with the same response. This revealed that a security mechanism was in place to prevent foreign/unknown values being processed. 
+Since I knew it was the LAMP stack, I did some research on the file structure and tried path traversal variants such as /file.php?cv=../../config.php or ../config.php to no luck.
+I was stumped here for quite a while as I didn't know how to access the local file config.php outside of path traversal. At this point I looked at a guide to see what other people
+had done to find they had used the following URL http://10.48.130.214/file.php?cv=file://config.php. After some research I learnt that “file:// is the default wrapper used with PHP 
+and represents the local filesystem. When a relative path is specified (a path which does not begin with /, \, \\, or a Windows drive letter) the path provided will be applied against 
+the current working directory.” which I found in the PHP documentation. With this I now had HR’s username and password and used them to login to the web portal. 
+
+FIRST FLAG AQUIRED - USER FLAG: THM{LOGGED_IN_USER} 
+
+SQL Injection 
+
+I knew I needed to get admin credential and knew they were stored in the database. A new form meant another potential SQL Injection. I tried a simple ‘ and pressed search. 
+Bingo an SQL error returned directly to the webpage. The ‘ input broke out of the SQL statement and revealed %’caused the error. Since % is a wildcard used in LIKE statements
+I figured it was performing something similar to “SELECT * WHERE username LIKE ‘input’”. Next I tried "alice%';-- "
+
+Success, this meant it was a LIKE statement and the ;-- commented out the trailing %’ causing the query to succeed. Since it my first SQL injection a OR 1=1 to make sure I got the query syntax correct. 
+
+Now that I knew it was correct I began sending queries to learn about the database. I performed a UNION SELECT until no error was returned revealing the no. of columns.  
+"1234%' OR 0 UNION SELECT 1,2,3,4';-- "
+
+Next, I got the database name “recruit_db” 
+"1234%' OR 0 UNION SELECT 1,2,3,database()';-- "
+
+Next, I retrieved the table names via 
+“1234%' OR 0 UNION SELECT 1,2,3,group_concat(table_name) FROM information_schema.tables WHERE table_schema = 'recruit_db';-- ” 
+
+Next the column names from the users table via  
+“1234' OR 0 UNION SELECT 1,2,3,group_concat(column_name) FROM information_schema.columns WHERE table_name = 'users';-- ”  
+
+This revealed columns USERSUSER,CURRENT_CONNECTIONS,TOTAL_CONNECTIONS,MAX_SESSION_CONTROLLED_MEMORY,MAX_SESSION_TOTAL_MEMORY,id,username,password 
+Notable username and password  
+
+Finally I used 
+“1234' OR 0 UNION SELECT 1,2,3,group_concat(username,':',password SEPARATOR '<br>') FROM users;-- ” 
+
+
+Revealing the admin username “admin” and password “admin@001admin”. 
+
+Logged in as admin revealed the final FLAG. 
+ADMIN FLAG: THM{LOGGED_IN_ADM1N1} 
+ 
+
+ 
